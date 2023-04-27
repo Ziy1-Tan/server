@@ -1072,6 +1072,49 @@ INSERT INTO t2 VALUES (1);
 DROP TABLE IF EXISTS t2, t1;
 --enable_warnings
 
+--echo #
+--echo #  MDEV-31086 MODIFY COLUMN can break FK constraints, and
+--echo #	lead to unrestorable dumps
+--echo #
+CREATE TABLE t1(
+  id SERIAL,
+  msg VARCHAR(100) CHARACTER SET utf8mb3,
+  KEY(msg))ENGINE=InnoDB;
+
+--error ER_CANT_CREATE_TABLE
+CREATE TABLE t2(
+id SERIAL,
+msg varchar(100) CHARACTER SET utf8mb4,
+CONSTRAINT fk_t1 FOREIGN KEY (msg) REFERENCES t1 (msg))ENGINE=InnoDB;
+
+CREATE TABLE t2(
+id SERIAL,
+msg varchar(100) CHARACTER SET utf8mb3,
+CONSTRAINT fk_t1 FOREIGN KEY (msg) REFERENCES t1 (msg)
+ON DELETE CASCADE)ENGINE=InnoDB;
+
+SET FOREIGN_KEY_CHECKS=1;
+--error ER_ALTER_OPERATION_NOT_SUPPORTED_REASON
+ALTER TABLE t2 MODIFY COLUMN msg VARCHAR(100) CHARACTER SET utf8mb4, algorithm=INPLACE;
+
+--error ER_ALTER_OPERATION_NOT_SUPPORTED_REASON
+ALTER TABLE t2 MODIFY COLUMN msg VARCHAR(200) CHARACTER SET utf8mb3, algorithm=INPLACE;
+
+# Allow column character length, character set change when
+# foreign_key_check is disabled
+
+SET FOREIGN_KEY_CHECKS=0;
+ALTER TABLE t2 MODIFY COLUMN msg VARCHAR(200) CHARACTER SET utf8mb3, algorithm=INPLACE;
+ALTER TABLE t2 MODIFY COLUMN msg VARCHAR(200) CHARACTER SET utf8mb4, algorithm=INPLACE;
+
+SHOW CREATE TABLE t1;
+SHOW CREATE TABLE t2;
+
+SET FOREIGN_KEY_CHECKS=1;
+INSERT INTO t1 VALUES(1, REPEAT('a', 100));
+--error ER_NO_REFERENCED_ROW_2
+INSERT INTO t2 VALUES(1, REPEAT('a', 200));
+DROP TABLE t2, t1;
 --echo # End of 10.6 tests
 
 --source include/wait_until_count_sessions.inc

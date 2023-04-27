@@ -2183,6 +2183,31 @@ next_page:
   goto scan_leaf;
 }
 
+/** Check whether the column is present in table foreign key
+relations.
+@param	table	table which has foreign key relation
+@param	col	column to be checked */
+static bool check_col_is_in_fk_indexes(const dict_table_t *table,
+                                       const dict_col_t *col)
+{
+  for (dict_foreign_set::iterator it= table->referenced_set.begin();
+       it!= table->referenced_set.end(); ++it)
+  {
+    for (ulint i= 0; i < (*it)->n_fields; i++)
+      if ((*it)->referenced_index->fields[i].col == col)
+        return true;
+  }
+
+  for (dict_foreign_set::iterator it= table->foreign_set.begin();
+       it!= table->foreign_set.end(); ++it)
+  {
+    for (ulint i= 0; i < (*it)->n_fields; i++)
+      if ((*it)->foreign_index->fields[i].col == col)
+        return true;
+  }
+  return false;
+}
+
 /** Check if InnoDB supports a particular alter table in-place
 @param altered_table TABLE object for new version of table.
 @param ha_alter_info Structure describing changes to be done
@@ -2664,6 +2689,34 @@ innodb_instant_alter_column_allowed_reason:
 
 next_column:
 		af++;
+	}
+
+	/** Alter shouldn't support if the foreign and referenced
+	index columns are modified */
+	if ((ha_alter_info->handler_flags
+	     & ALTER_COLUMN_TYPE_CHANGE_BY_ENGINE)
+	    && !thd_test_options(
+			m_user_thd, OPTION_NO_FOREIGN_KEY_CHECKS)) {
+		List_iterator<Create_field> it(
+			ha_alter_info->alter_info->create_list);
+		for (uint i = 0; i < table->s->fields; i++) {
+			Field* field = table->field[i];
+			Create_field *f= it++;
+			if (!f || field->is_equal(*f))
+				continue;
+
+			dict_col_t *col= dict_table_get_nth_col(
+				m_prebuilt->table, i);
+			/* Check foreign key index */
+			if (check_col_is_in_fk_indexes(
+				m_prebuilt->table, col)) {
+				ha_alter_info->unsupported_reason=
+				  "Column change is not allowed when"
+				  " foreign key is involved. Disable "
+				  "foreign_key_checks and try again";
+				DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+			}
+		}
 	}
 
 	const bool supports_instant = instant_alter_column_possible(
