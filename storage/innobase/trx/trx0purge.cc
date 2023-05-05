@@ -829,7 +829,7 @@ not_free:
       rseg.reinit(rblock->page.id().page_no());
     }
 
-    mtr.commit_shrink(space);
+    mtr.commit_shrink(space, *(space.chain.start));
 
     /* No mutex; this is only updated by the purge coordinator. */
     export_vars.innodb_undo_truncations++;

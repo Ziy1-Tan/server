@@ -489,17 +489,15 @@ void mtr_t::rollback_to_savepoint(ulint begin, ulint end)
 
 /** Commit a mini-transaction that is shrinking a tablespace.
 @param space   tablespace that is being shrunk */
-void mtr_t::commit_shrink(fil_space_t &space)
+void mtr_t::commit_shrink(fil_space_t &space, fil_node_t &node)
 {
   ut_ad(is_active());
   ut_ad(!high_level_read_only);
   ut_ad(m_modifications);
-  ut_ad(m_made_dirty);
   ut_ad(!m_memo.empty());
   ut_ad(!recv_recovery_is_on());
   ut_ad(m_log_mode == MTR_LOG_ALL);
   ut_ad(!m_freed_pages);
-  ut_ad(UT_LIST_GET_LEN(space.chain) == 1);
 
   log_write_and_flush_prepare();
   m_latch_ex= true;
@@ -514,8 +512,8 @@ void mtr_t::commit_shrink(fil_space_t &space)
   ut_ad(log_sys.latch.is_write_locked());
 #endif
 
-  os_file_truncate(space.chain.start->name, space.chain.start->handle,
-                   os_offset_t{space.size} << srv_page_size_shift, true);
+  os_file_truncate(node.name, node.handle,
+                   os_offset_t{node.size} << srv_page_size_shift, true);
 
   space.clear_freed_ranges();
 

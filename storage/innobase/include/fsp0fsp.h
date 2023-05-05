@@ -573,6 +573,10 @@ inline void fsp_init_file_page(
 	mtr->init(block);
 }
 
+/** Truncate the given tablespace
+@param	space	system tablespace */
+dberr_t fsp_tablespace_truncate(fil_space_t *space);
+
 #ifndef UNIV_DEBUG
 # define fsp_init_file_page(space, block, mtr) fsp_init_file_page(block, mtr)
 #endif
