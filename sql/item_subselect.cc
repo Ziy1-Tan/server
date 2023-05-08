@@ -3099,6 +3099,75 @@ alloc_err:
   return TRUE;
 }
 
+bool Item_in_subselect::exists2in_processor(void *opt_arg)
+{
+  THD *thd= (THD *)opt_arg;
+  SELECT_LEX *first_select= unit->first_select();
+  JOIN *join= first_select->join;
+  bool will_be_correlated;
+  Dynamic_array<EQ_FIELD_OUTER> eqs(PSI_INSTRUMENT_MEM, 5, 5);
+  List<Item> outer;
+  Query_arena *arena= NULL, backup;
+  DBUG_ENTER("Item_in_subselect::exists2in_processor");
+  if (!optimizer_flag(thd, OPTIMIZER_SWITCH_EXISTS_TO_IN) ||
+      (!is_top_level_item() &&
+       (!upper_not || !upper_not->is_top_level_item())) ||
+      first_select->group_list.elements ||
+      join->having ||
+      !join->conds)
+    DBUG_RETURN(FALSE);
+  /* iterate over conditions, and check whether they can be moved out. */
+  if (find_inner_outer_equalities(&join->conds, eqs))
+    DBUG_RETURN(FALSE);
+  arena= thd->activate_stmt_arena_if_needed(&backup);
+  /* move out the conditions */
+  if (left_expr->type() == Item::ROW_ITEM)
+    for (uint i= 0; i < left_expr->cols(); i++)
+      outer.push_back(left_expr->element_index(i));
+  else
+    outer.push_back(left_expr);
+  const uint offset= first_select->item_list.elements;
+  /* check that the subquery has only dependencies we are going pull out */
+  {
+    List<Item> unused;
+    Collect_deps_prm prm= {&unused,          // parameters
+      unit->first_select()->nest_level_base, // nest_level_base
+      0,                                     // count
+      unit->first_select()->nest_level,      // nest_level
+      FALSE                                  // collect
+    };
+    walk(&Item::collect_outer_ref_processor, TRUE, &prm);
+    DBUG_ASSERT(prm.count > 0);
+    DBUG_ASSERT(prm.count >= (uint)eqs.elements());
+    will_be_correlated= prm.count > (uint)eqs.elements();
+  }
+  for (uint i= 0; i < (uint)eqs.elements(); i++)
+  {
+    Item **eq_ref= eqs.at(i).eq_ref;
+    Item_ident *local_field= eqs.at(i).local_field;
+    Item *outer_exp= eqs.at(i).outer_exp;
+    first_select->item_list.push_back(local_field, thd->mem_root);
+    first_select->ref_pointer_array[offset + i]= (Item *)local_field;
+    outer.push_back(outer_exp);
+    *eq_ref= new (thd->mem_root) Item_int(thd, 1);
+    if((*eq_ref)->fix_fields(thd, (Item **)eq_ref))
+      DBUG_RETURN(TRUE);
+  }
+  left_expr= new (thd->mem_root) Item_row(thd, outer);
+  if (left_expr->fix_fields(thd, &left_expr))
+    DBUG_RETURN(TRUE);
+  left_expr_orig= left_expr;
+  is_correlated= will_be_correlated;
+  OPT_TRACE_TRANSFORM(thd, trace_wrapper, trace_transform,
+                      get_select_lex()->select_number,
+                      "IN (SELECT)", "decorrelation");
+  /* fixme: we may need to `goto out;` like in Item_exists_subselect::exists2in_processor */
+  /* this is to prevent new items added to the free list */
+  if (arena)
+    thd->restore_active_arena(arena, &backup);
+  DBUG_RETURN(FALSE);
+}
+
 /**
   Converts EXISTS subquery to IN subquery if it is possible and has sense
 
