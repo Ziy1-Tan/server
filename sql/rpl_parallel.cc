@@ -2400,14 +2400,16 @@ rpl_parallel::find(uint32 domain_id)
     e->domain_id= domain_id;
     e->stop_on_error_sub_id= (uint64)ULONGLONG_MAX;
     e->pause_sub_id= (uint64)ULONGLONG_MAX;
-    if (my_hash_insert(&domain_hash, (uchar *)e))
-    {
-      my_free(e);
-      return NULL;
-    }
     mysql_mutex_init(key_LOCK_parallel_entry, &e->LOCK_parallel_entry,
                      MY_MUTEX_INIT_FAST);
     mysql_cond_init(key_COND_parallel_entry, &e->COND_parallel_entry, NULL);
+    if (my_hash_insert(&domain_hash, (uchar *)e))
+    {
+      mysql_cond_destroy(&e->COND_parallel_entry);
+      mysql_mutex_destroy(&e->LOCK_parallel_entry);
+      my_free(e);
+      return NULL;
+    }
   }
   else
     e->force_abort= false;
@@ -2933,7 +2935,12 @@ rpl_parallel::do_event(rpl_group_info *serial_rgi, Log_event *ev,
 
       if (mode <= SLAVE_PARALLEL_MINIMAL ||
           !(gtid_flags & Gtid_log_event::FL_GROUP_COMMIT_ID) ||
-          e->last_commit_id != gtid_ev->commit_id)
+          e->last_commit_id != gtid_ev->commit_id ||
+          /*
+            MULTI_BATCH is also set when the current gtid even being a member
+            of a commit group is flagged as DDL which disallows parallel.
+          */
+          (gtid_flags & Gtid_log_event::FL_DDL))
         flags|= group_commit_orderer::MULTI_BATCH;
       /* Make sure we do not attempt to run DDL in parallel speculatively. */
       if (gtid_flags & Gtid_log_event::FL_DDL)
