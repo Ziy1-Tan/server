@@ -3259,10 +3259,16 @@ dberr_t fsp_tablespace_truncate(fil_space_t *space)
   mtr.write<4>(*header, FSP_HEADER_OFFSET + FSP_SIZE
                + header->page.frame, last_used_extent);
 
+  space->size= last_used_extent;
+
   if (space->free_limit > last_used_extent)
+  {
     mtr.write<4,mtr_t::MAYBE_NOP>(*header, FSP_HEADER_OFFSET
                                   + FSP_FREE_LIMIT + header->page.frame,
 				  last_used_extent);
+    space->free_limit= space->size;
+  }
+
   /* Last file new size after truncation */
   uint32_t new_last_file_size=
     last_used_extent -
@@ -3274,8 +3280,6 @@ dberr_t fsp_tablespace_truncate(fil_space_t *space)
   ib::info() <<"Truncating system tablespaces from " << space->size
 	     << " to " << last_used_extent << " pages";
 
-  space->size= last_used_extent;
-  space->free_limit= space->size;
   space->size_in_header= space->size;
   space->is_being_truncated= true;
   space->set_stopping();
